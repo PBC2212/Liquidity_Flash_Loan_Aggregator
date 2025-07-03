@@ -2,111 +2,61 @@
 pragma solidity ^0.8.21;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./interfaces/IChainlink.sol";
-import "./libraries/Constants.sol";
 
-/**
- * @title PriceOracle
- * @dev Basic price oracle for getting USD prices of tokens using Chainlink feeds
- * @author Your Team
- */
-contract PriceOracle is Ownable, IPriceOracle {
-    /*//////////////////////////////////////////////////////////////
-                            STATE VARIABLES
-    //////////////////////////////////////////////////////////////*/
+interface IPriceOracle {
+    function getLatestPrice(address token) external view returns (uint256 price, uint8 decimals);
+}
 
-    /// @dev Mapping from token address to Chainlink price feed address
-    mapping(address => address) public priceFeeds;
-
-    /// @dev Mapping from token address to token decimals
+contract PriceOracle is IPriceOracle, Ownable {
+    
+    mapping(address => uint256) public tokenPrices;
     mapping(address => uint8) public tokenDecimals;
-
-    /// @dev Maximum allowed price staleness (1 hour)
-    uint256 public constant MAX_PRICE_STALENESS = 3600;
-
-    /*//////////////////////////////////////////////////////////////
-                                EVENTS
-    //////////////////////////////////////////////////////////////*/
-
-    event PriceFeedAdded(address indexed token, address indexed priceFeed, uint8 decimals);
-    event PriceFeedRemoved(address indexed token);
-
-    /*//////////////////////////////////////////////////////////////
-                            CUSTOM ERRORS
-    //////////////////////////////////////////////////////////////*/
-
-    error InvalidToken();
-    error InvalidPriceFeed();
-    error PriceFeedNotFound();
-    error StalePrice();
-    error InvalidPrice();
-
-    /*//////////////////////////////////////////////////////////////
-                            CONSTRUCTOR
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @dev Initialize the price oracle
-     * @param _owner Address that will own the contract
-     */
-    constructor(address _owner) {
-        if (_owner == address(0)) revert InvalidToken();
-        _transferOwnership(_owner);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                         PRICE FEED MANAGEMENT
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @dev Add a price feed for a token
-     * @param token The token address
-     * @param priceFeed The Chainlink price feed address
-     * @param decimals The number of decimals for the token
-     */
-    function addPriceFeed(
-        address token,
-        address priceFeed,
-        uint8 decimals
-    ) external onlyOwner {
-        if (token == address(0)) revert InvalidToken();
-        if (priceFeed == address(0)) revert InvalidPriceFeed();
+    
+    event PriceUpdated(address indexed token, uint256 price, uint8 decimals);
+    
+    constructor() Ownable(msg.sender) {
+        // Initialize with some default prices for common tokens
+        // Sepolia WETH
+        tokenPrices[0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14] = 2000e8; // $2000
+        tokenDecimals[0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14] = 8;
         
-        priceFeeds[token] = priceFeed;
+        // Sepolia USDC
+        tokenPrices[0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8] = 1e8; // $1
+        tokenDecimals[0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8] = 8;
+        
+        // Sepolia LINK
+        tokenPrices[0x779877A7B0D9E8603169DdbD7836e478b4624789] = 15e8; // $15
+        tokenDecimals[0x779877A7B0D9E8603169DdbD7836e478b4624789] = 8;
+    }
+    
+    function getLatestPrice(address token) external view override returns (uint256 price, uint8 decimals) {
+        price = tokenPrices[token];
+        decimals = tokenDecimals[token];
+        
+        // If no price set, return default values
+        if (price == 0) {
+            price = 1e8; // $1 default
+            decimals = 8;
+        }
+    }
+    
+    function setTokenPrice(address token, uint256 price, uint8 decimals) external onlyOwner {
+        tokenPrices[token] = price;
         tokenDecimals[token] = decimals;
-        
-        emit PriceFeedAdded(token, priceFeed, decimals);
+        emit PriceUpdated(token, price, decimals);
     }
-
-    /**
-     * @dev Remove a price feed for a token
-     * @param token The token address
-     */
-    function removePriceFeed(address token) external onlyOwner {
-        if (priceFeeds[token] == address(0)) revert PriceFeedNotFound();
+    
+    function setMultipleTokenPrices(
+        address[] calldata tokens,
+        uint256[] calldata prices,
+        uint8[] calldata decimalsArray
+    ) external onlyOwner {
+        require(tokens.length == prices.length && prices.length == decimalsArray.length, "Array length mismatch");
         
-        delete priceFeeds[token];
-        delete tokenDecimals[token];
-        
-        emit PriceFeedRemoved(token);
+        for (uint256 i = 0; i < tokens.length; i++) {
+            tokenPrices[tokens[i]] = prices[i];
+            tokenDecimals[tokens[i]] = decimalsArray[i];
+            emit PriceUpdated(tokens[i], prices[i], decimalsArray[i]);
+        }
     }
-
-    /*//////////////////////////////////////////////////////////////
-                           PRICE QUERIES
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @dev Get the USD price of a token (implements IPriceOracle)
-     * @param token The token address
-     * @return price The price in USD (18 decimals)
-     */
-    function getTokenPriceUSD(address token) external view override returns (uint256 price) {
-        address priceFeed = priceFeeds[token];
-        if (priceFeed == address(0)) revert PriceFeedNotFound();
-
-        try AggregatorV3Interface(priceFeed).latestRoundData() returns (
-            uint80,
-            int256 answer,
-            uint256,
-            uint256 updatedAt,
-            uint80
+}

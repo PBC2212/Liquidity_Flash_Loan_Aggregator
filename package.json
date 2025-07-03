@@ -1,20 +1,19 @@
 {
-  "name": "liquidity_flash_loan_aggregator",
+  "name": "liquidity-flash-loan-aggregator",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Flash loan aggregator with multi-provider support",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "compile": "npx hardhat compile",
+    "test": "npx hardhat test",
+    "deploy:localhost": "npx hardhat run scripts/deploy.js --network localhost",
+    "node": "npx hardhat node"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^6.0.0",
-    "hardhat": "^2.25.0"
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.0"
   },
   "dependencies": {
-    "@chainlink/contracts": "^1.4.0",
-    "@openzeppelin/contracts": "^5.3.0"
+    "@openzeppelin/contracts": "^5.3.0",
+    "dotenv": "^17.0.0"
   }
 }

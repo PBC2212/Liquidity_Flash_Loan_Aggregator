@@ -44,18 +44,19 @@ interface AggregatorV3Interface {
  */
 interface IPriceOracle {
     /**
-     * @dev Returns the asset price in the base currency
-     * @param asset The address of the asset
-     * @return The price of the asset
+     * @dev Returns the latest price and decimals for a token
+     * @param token The address of the token
+     * @return price The price of the token
+     * @return decimals The number of decimals for the price
      */
-    function getAssetPrice(address asset) external view returns (uint256);
+    function getLatestPrice(address token) external view returns (uint256 price, uint8 decimals);
 
     /**
-     * @dev Set the price of a given asset
-     * @param asset The address of the asset
-     * @param price The price of the asset
+     * @dev Returns the USD price of a token (18 decimals)
+     * @param token The address of the token
+     * @return price The price in USD
      */
-    function setAssetPrice(address asset, uint256 price) external;
+    function getTokenPriceUSD(address token) external view returns (uint256 price);
 }
 
 /**

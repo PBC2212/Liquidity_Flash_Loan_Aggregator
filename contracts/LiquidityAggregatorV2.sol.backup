@@ -1,0 +1,477 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.21;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/IChainlink.sol";
+import "./interfaces/IAaveV3.sol";
+import "./interfaces/IBalancer.sol";
+import "./interfaces/IUniswapV3.sol";
+
+/**
+ * @title CustodyRegistry
+ * @dev Tracks custody, compliance, and off-chain verification for asset tokens.
+ */
+contract CustodyRegistry is Ownable {
+    struct ComplianceStatus {
+        bool kycCompleted;
+        bool amlCompleted;
+        bool inspectionPassed;
+        bool titleVerified;
+        bool custodyConfirmed;
+        uint256 lastUpdated;
+    }
+
+    struct AssetCustodyInfo {
+        string assetDescription; // e.g. "123 Main St, NY"
+        uint256 chainId;         // EVM chain ID
+        address custodyAddress;  // Address holding the asset token
+        address defiProtocol;    // DeFi protocol contract (if deposited)
+        string custodyType;      // e.g. "Escrow", "SPV", "Vault"
+        string offchainDocs;     // IPFS hash or URL to docs (title, inspection, etc.)
+        ComplianceStatus compliance;
+    }
+
+    mapping(address => AssetCustodyInfo) public assetInfo; // token => info
+
+    address public dao;
+
+    event AssetRegistered(address indexed token, AssetCustodyInfo info);
+    event ComplianceUpdated(address indexed token, ComplianceStatus status);
+
+    modifier onlyDAOorOwner() {
+        require(msg.sender == owner() || msg.sender == dao, "Not authorized");
+        _;
+    }
+
+    // FIXED: Pass _dao to Ownable constructor
+    constructor(address _dao) Ownable(_dao) {
+        require(_dao != address(0), "Invalid DAO");
+        dao = _dao;
+    }
+
+    function registerAsset(
+        address token,
+        string calldata description,
+        uint256 chainId,
+        address custodyAddress,
+        address defiProtocol,
+        string calldata custodyType,
+        string calldata offchainDocs
+    ) external onlyDAOorOwner {
+        AssetCustodyInfo storage info = assetInfo[token];
+        info.assetDescription = description;
+        info.chainId = chainId;
+        info.custodyAddress = custodyAddress;
+        info.defiProtocol = defiProtocol;
+        info.custodyType = custodyType;
+        info.offchainDocs = offchainDocs;
+        emit AssetRegistered(token, info);
+    }
+
+    function updateCompliance(
+        address token,
+        bool kyc,
+        bool aml,
+        bool inspection,
+        bool title,
+        bool custody
+    ) external onlyDAOorOwner {
+        ComplianceStatus memory status = ComplianceStatus({
+            kycCompleted: kyc,
+            amlCompleted: aml,
+            inspectionPassed: inspection,
+            titleVerified: title,
+            custodyConfirmed: custody,
+            lastUpdated: block.timestamp
+        });
+        assetInfo[token].compliance = status;
+        emit ComplianceUpdated(token, status);
+    }
+
+    function getAssetInfo(address token) external view returns (AssetCustodyInfo memory) {
+        return assetInfo[token];
+    }
+
+    function isAssetCompliant(address token) external view returns (bool) {
+        ComplianceStatus memory c = assetInfo[token].compliance;
+        return c.kycCompleted && c.amlCompleted && c.inspectionPassed && c.titleVerified && c.custodyConfirmed;
+    }
+}
+
+/**
+ * @title LiquidityAggregatorV2
+ * @dev Aggregates flash loans, manages ERC20 collateral, and integrates custody/compliance registry for RWA tokens.
+ */
+contract LiquidityAggregatorV2 is
+    ReentrancyGuard,
+    Ownable,
+    IAaveFlashLoanReceiver,
+    IBalancerFlashLoanRecipient,
+    IUniswapV3FlashCallback
+{
+    using SafeERC20 for IERC20;
+
+    enum FlashLoanProvider { AAVE, BALANCER, UNISWAP }
+
+    address public daoAddress;
+    IPriceOracle public priceOracle;
+    CustodyRegistry public custodyRegistry;
+    uint256 public minimumCollateralRatio = 10500; // 105%
+    uint256 public slippageTolerance = 300; // 3% (basis points)
+
+    // Provider addresses (Sepolia testnet)
+    address public constant AAVE_POOL_ADDRESSES_PROVIDER = 0x012bAC54348C0E635dCAc9D5FB99f06F24136C9A;
+    address public constant BALANCER_VAULT = 0xBA12222222228d8Ba445958a75a0704d566BF2C8;
+    address public constant UNISWAP_V3_FACTORY = 0x1F98431c8aD98523631AE4a59f267346ea31F984;
+    address public constant UNISWAP_SWAP_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+
+    address public constant WETH = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14;
+    address public constant USDC = 0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8;
+
+    mapping(address => bool) public allowedERC20Collateral;
+    mapping(address => mapping(address => uint256)) public userERC20Collateral;
+
+    // Events
+    event FlashLoanExecuted(address indexed user, FlashLoanProvider provider, address indexed loanAsset, uint256 loanAmount, address[] collateralTokens, uint256[] collateralAmounts);
+    event CollateralAdded(address indexed token);
+    event CollateralRemoved(address indexed token);
+    event DAOAddressUpdated(address indexed oldDAO, address indexed newDAO);
+    event MinimumCollateralRatioUpdated(uint256 oldRatio, uint256 newRatio);
+    event SlippageToleranceUpdated(uint256 oldTolerance, uint256 newTolerance);
+    event PriceOracleUpdated(address indexed oldOracle, address indexed newOracle);
+    event CustodyRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
+    event CollateralPulled(address indexed user, address indexed token, uint256 amount);
+    event CollateralSwapped(address indexed user, address[] collateralTokens, uint256[] collateralAmounts, address outputAsset, uint256 outputAmount);
+    event LoanRepaid(address indexed user, address loanAsset, uint256 repayAmount, FlashLoanProvider provider);
+
+    error InvalidProvider();
+    error InvalidCollateral();
+    error InsufficientCollateralValue();
+    error SwapFailed();
+    error RepaymentFailed();
+    error UnauthorizedCallback();
+    error InvalidPrice();
+    error SlippageExceeded();
+    error DAOOnly();
+    error InvalidAddress();
+    error InvalidRatio();
+    error LengthMismatch();
+    error NotAllowedCollateral();
+    error NoLiquidity();
+
+    modifier onlyDAO() {
+        require(msg.sender == daoAddress, "DAO only");
+        _;
+    }
+
+    modifier onlyTrustedProvider() {
+        address aavePool = IAavePoolAddressesProvider(AAVE_POOL_ADDRESSES_PROVIDER).getPool();
+        require(
+            msg.sender == aavePool ||
+            msg.sender == BALANCER_VAULT ||
+            _isValidUniswapPool(msg.sender),
+            "Unauthorized callback"
+        );
+        _;
+    }
+
+    constructor(address _daoAddress, address _priceOracle, address _custodyRegistry) Ownable(_daoAddress) {
+        require(_daoAddress != address(0) && _priceOracle != address(0) && _custodyRegistry != address(0), "Invalid address");
+        daoAddress = _daoAddress;
+        priceOracle = IPriceOracle(_priceOracle);
+        custodyRegistry = CustodyRegistry(_custodyRegistry);
+    }
+
+    // Main Flash Loan Function
+    function initiateFlashLoan(
+        FlashLoanProvider provider,
+        address loanAsset,
+        uint256 loanAmount,
+        address[] calldata collateralTokens,
+        uint256[] calldata collateralAmounts
+    ) external nonReentrant {
+        require(collateralTokens.length == collateralAmounts.length, "Length mismatch");
+        require(loanAsset != address(0) && loanAmount > 0, "Invalid collateral");
+
+        _pullCollateral(collateralTokens, collateralAmounts, msg.sender);
+
+        uint256 estimatedFee = _estimateFlashLoanFee(provider, loanAmount);
+        require(_verifyCollateralValue(collateralTokens, collateralAmounts, loanAsset, loanAmount, estimatedFee), "Insufficient collateral value");
+
+        bytes memory params = abi.encode(msg.sender, collateralTokens, collateralAmounts);
+
+        if (provider == FlashLoanProvider.AAVE) {
+            _initiateAaveFlashLoan(loanAsset, loanAmount, params);
+        } else if (provider == FlashLoanProvider.BALANCER) {
+            _initiateBalancerFlashLoan(loanAsset, loanAmount, params);
+        } else if (provider == FlashLoanProvider.UNISWAP) {
+            _initiateUniswapFlashLoan(loanAsset, loanAmount, params);
+        } else {
+            revert InvalidProvider();
+        }
+
+        emit FlashLoanExecuted(msg.sender, provider, loanAsset, loanAmount, collateralTokens, collateralAmounts);
+    }
+
+    // Flash Loan Initiations
+    function _initiateAaveFlashLoan(address asset, uint256 amount, bytes memory params) internal {
+        address pool = IAavePoolAddressesProvider(AAVE_POOL_ADDRESSES_PROVIDER).getPool();
+        address[] memory assets = new address[](1);
+        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory modes = new uint256[](1);
+        assets[0] = asset;
+        amounts[0] = amount;
+        modes[0] = 0;
+        IAavePool(pool).flashLoan(address(this), assets, amounts, modes, address(this), params, 0);
+    }
+
+    function _initiateBalancerFlashLoan(address asset, uint256 amount, bytes memory params) internal {
+        IERC20[] memory tokens = new IERC20[](1);
+        uint256[] memory amounts = new uint256[](1);
+        tokens[0] = IERC20(asset);
+        amounts[0] = amount;
+        IBalancerVault(BALANCER_VAULT).flashLoan(IBalancerFlashLoanRecipient(address(this)), tokens, amounts, params);
+    }
+
+    function _initiateUniswapFlashLoan(address asset, uint256 amount, bytes memory params) internal {
+        address pool = _findBestUniswapPool(asset);
+        require(pool != address(0), "No liquidity");
+        address token0 = IUniswapV3Pool(pool).token0();
+        address token1 = IUniswapV3Pool(pool).token1();
+        uint256 amount0 = asset == token0 ? amount : 0;
+        uint256 amount1 = asset == token1 ? amount : 0;
+        bytes memory data = abi.encode(params, asset, amount);
+        IUniswapV3Pool(pool).flash(address(this), amount0, amount1, data);
+    }
+
+    // Flash Loan Callbacks
+    function executeOperation(
+        address[] calldata assets,
+        uint256[] calldata amounts,
+        uint256[] calldata premiums,
+        address,
+        bytes calldata params
+    ) external override onlyTrustedProvider nonReentrant returns (bool) {
+        (address user, address[] memory collateralTokens, uint256[] memory collateralAmounts) = abi.decode(params, (address, address[], uint256[]));
+        uint256 totalRepayAmount = amounts[0] + premiums[0];
+        uint256 totalOutput = _swapCollateralForTarget(collateralTokens, collateralAmounts, assets[0], totalRepayAmount, user);
+        uint256 balance = IERC20(assets[0]).balanceOf(address(this));
+        require(balance >= totalRepayAmount, "Insufficient collateral value");
+        IERC20(assets[0]).forceApprove(msg.sender, totalRepayAmount);
+        if (balance > totalRepayAmount) {
+            IERC20(assets[0]).safeTransfer(user, balance - totalRepayAmount);
+        }
+        emit LoanRepaid(user, assets[0], totalRepayAmount, FlashLoanProvider.AAVE);
+        return true;
+    }
+
+    function receiveFlashLoan(
+        IERC20[] memory tokens,
+        uint256[] memory amounts,
+        uint256[] memory feeAmounts,
+        bytes memory userData
+    ) external override onlyTrustedProvider nonReentrant {
+        (address user, address[] memory collateralTokens, uint256[] memory collateralAmounts) = abi.decode(userData, (address, address[], uint256[]));
+        uint256 totalRepayAmount = amounts[0] + feeAmounts[0];
+        uint256 totalOutput = _swapCollateralForTarget(collateralTokens, collateralAmounts, address(tokens[0]), totalRepayAmount, user);
+        uint256 balance = tokens[0].balanceOf(address(this));
+        require(balance >= totalRepayAmount, "Insufficient collateral value");
+        tokens[0].safeTransfer(BALANCER_VAULT, totalRepayAmount);
+        if (balance > totalRepayAmount) {
+            tokens[0].safeTransfer(user, balance - totalRepayAmount);
+        }
+        emit LoanRepaid(user, address(tokens[0]), totalRepayAmount, FlashLoanProvider.BALANCER);
+    }
+
+    function uniswapV3FlashCallback(
+        uint256 fee0,
+        uint256 fee1,
+        bytes calldata data
+    ) external override onlyTrustedProvider nonReentrant {
+        (bytes memory originalParams, address loanAsset, uint256 loanAmount) = abi.decode(data, (bytes, address, uint256));
+        (address user, address[] memory collateralTokens, uint256[] memory collateralAmounts) = abi.decode(originalParams, (address, address[], uint256[]));
+        uint256 totalRepayAmount = loanAmount + fee0 + fee1;
+        uint256 totalOutput = _swapCollateralForTarget(collateralTokens, collateralAmounts, loanAsset, totalRepayAmount, user);
+        uint256 balance = IERC20(loanAsset).balanceOf(address(this));
+        require(balance >= totalRepayAmount, "Insufficient collateral value");
+        IERC20(loanAsset).safeTransfer(msg.sender, totalRepayAmount);
+        if (balance > totalRepayAmount) {
+            IERC20(loanAsset).safeTransfer(user, balance - totalRepayAmount);
+        }
+        emit LoanRepaid(user, loanAsset, totalRepayAmount, FlashLoanProvider.UNISWAP);
+    }
+
+    // Enhanced Swap Function
+    function _swapCollateralForTarget(
+        address[] memory collateralTokens,
+        uint256[] memory collateralAmounts,
+        address targetAsset,
+        uint256 minAmountOut,
+        address user
+    ) internal returns (uint256 totalOutput) {
+        for (uint256 i = 0; i < collateralTokens.length; i++) {
+            address token = collateralTokens[i];
+            uint256 amount = collateralAmounts[i];
+            if (token == targetAsset) {
+                totalOutput += amount;
+            } else {
+                uint256 swapOutput = _swapViaUniswap(token, targetAsset, amount);
+                totalOutput += swapOutput;
+            }
+        }
+        require(totalOutput >= minAmountOut, "Slippage exceeded");
+        emit CollateralSwapped(user, collateralTokens, collateralAmounts, targetAsset, totalOutput);
+    }
+
+    function _swapViaUniswap(address tokenIn, address tokenOut, uint256 amountIn) internal returns (uint256 amountOut) {
+        IERC20(tokenIn).forceApprove(UNISWAP_SWAP_ROUTER, amountIn);
+        (uint256 priceIn, uint8 decIn) = getChainlinkPrice(tokenIn);
+        (uint256 priceOut, uint8 decOut) = getChainlinkPrice(tokenOut);
+        require(priceIn > 0 && priceOut > 0, "Invalid oracle price");
+        uint256 expectedOut = (amountIn * priceIn * (10 ** decOut)) / (priceOut * (10 ** decIn));
+        uint256 minOut = (expectedOut * (10000 - slippageTolerance)) / 10000;
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+            tokenIn: tokenIn,
+            tokenOut: tokenOut,
+            fee: 3000,
+            recipient: address(this),
+            deadline: block.timestamp + 300,
+            amountIn: amountIn,
+            amountOutMinimum: minOut,
+            sqrtPriceLimitX96: 0
+        });
+        amountOut = ISwapRouter(UNISWAP_SWAP_ROUTER).exactInputSingle(params);
+    }
+
+    // Helper Functions
+    function _estimateFlashLoanFee(FlashLoanProvider provider, uint256 amount) internal pure returns (uint256) {
+        if (provider == FlashLoanProvider.AAVE) {
+            return amount * 9 / 10000;
+        } else if (provider == FlashLoanProvider.BALANCER) {
+            return 0;
+        } else if (provider == FlashLoanProvider.UNISWAP) {
+            return amount * 30 / 10000;
+        }
+        return 0;
+    }
+
+    function _findBestUniswapPool(address token) internal view returns (address) {
+        address[2] memory quotes = [WETH, USDC];
+        // FIXED: Explicit uint24 casting
+        uint24[3] memory fees = [uint24(500), uint24(3000), uint24(10000)];
+        for (uint256 q = 0; q < quotes.length; q++) {
+            if (quotes[q] == token) continue;
+            for (uint256 i = 0; i < fees.length; i++) {
+                address pool = IUniswapV3Factory(UNISWAP_V3_FACTORY).getPool(token, quotes[q], fees[i]);
+                if (pool != address(0)) return pool;
+            }
+        }
+        return address(0);
+    }
+
+    function _isValidUniswapPool(address pool) internal view returns (bool) {
+        try IUniswapV3Pool(pool).token0() returns (address) {
+            try IUniswapV3Pool(pool).token1() returns (address) {
+                return true;
+            } catch { return false; }
+        } catch { return false; }
+    }
+
+    // Collateral Management (ERC20 only, with custody/compliance check)
+    function _pullCollateral(
+        address[] calldata collateralTokens,
+        uint256[] calldata collateralAmounts,
+        address user
+    ) internal {
+        for (uint256 i = 0; i < collateralTokens.length; i++) {
+            address token = collateralTokens[i];
+            uint256 amount = collateralAmounts[i];
+            require(allowedERC20Collateral[token], "Not allowed collateral");
+            require(custodyRegistry.isAssetCompliant(token), "Asset not compliant or not in custody");
+            IERC20(token).safeTransferFrom(user, address(this), amount);
+            userERC20Collateral[user][token] += amount;
+            emit CollateralPulled(user, token, amount);
+        }
+    }
+
+    // Collateral Value Check
+    function _verifyCollateralValue(
+        address[] calldata collateralTokens,
+        uint256[] calldata collateralAmounts,
+        address loanAsset,
+        uint256 loanAmount,
+        uint256 premium
+    ) internal view returns (bool) {
+        uint256 totalValue = 0;
+        (uint256 loanAssetPrice, uint8 loanAssetDecimals) = getChainlinkPrice(loanAsset);
+        for (uint256 i = 0; i < collateralTokens.length; i++) {
+            address token = collateralTokens[i];
+            uint256 amount = collateralAmounts[i];
+            (uint256 price, uint8 decimals) = getChainlinkPrice(token);
+            require(price > 0, "Invalid price");
+            uint256 value = (price * amount) / (10 ** decimals);
+            totalValue += value;
+        }
+        uint256 requiredValue = ((loanAmount + premium) * minimumCollateralRatio * loanAssetPrice) / (10000 * (10 ** loanAssetDecimals));
+        return totalValue >= requiredValue;
+    }
+
+    function getChainlinkPrice(address token) public view returns (uint256 price, uint8 decimals) {
+        (price, decimals) = priceOracle.getLatestPrice(token);
+    }
+
+    // Governance Functions
+    function addAllowedCollateral(address token) external onlyDAO {
+        require(token != address(0), "Invalid address");
+        allowedERC20Collateral[token] = true;
+        emit CollateralAdded(token);
+    }
+
+    function removeAllowedCollateral(address token) external onlyDAO {
+        allowedERC20Collateral[token] = false;
+        emit CollateralRemoved(token);
+    }
+
+    function setSlippageTolerance(uint256 bps) external onlyDAO {
+        require(bps <= 1000, "Invalid ratio");
+        uint256 oldTolerance = slippageTolerance;
+        slippageTolerance = bps;
+        emit SlippageToleranceUpdated(oldTolerance, bps);
+    }
+
+    function setMinimumCollateralRatio(uint256 _ratio) external onlyDAO {
+        require(_ratio >= 10000, "Invalid ratio");
+        uint256 oldRatio = minimumCollateralRatio;
+        minimumCollateralRatio = _ratio;
+        emit MinimumCollateralRatioUpdated(oldRatio, _ratio);
+    }
+
+    function setPriceOracle(address _oracle) external onlyDAO {
+        require(_oracle != address(0), "Invalid address");
+        address oldOracle = address(priceOracle);
+        priceOracle = IPriceOracle(_oracle);
+        emit PriceOracleUpdated(oldOracle, _oracle);
+    }
+
+    function setDAOAddress(address _dao) external onlyDAO {
+        require(_dao != address(0), "Invalid address");
+        address oldDAO = daoAddress;
+        daoAddress = _dao;
+        emit DAOAddressUpdated(oldDAO, _dao);
+    }
+
+    function setCustodyRegistry(address _registry) external onlyDAO {
+        require(_registry != address(0), "Invalid address");
+        address oldRegistry = address(custodyRegistry);
+        custodyRegistry = CustodyRegistry(_registry);
+        emit CustodyRegistryUpdated(oldRegistry, _registry);
+    }
+
+    // Emergency Withdrawal
+    function withdrawERC20(IERC20 token, uint256 amount) external onlyOwner {
+        token.safeTransfer(owner(), amount);
+    }
+}

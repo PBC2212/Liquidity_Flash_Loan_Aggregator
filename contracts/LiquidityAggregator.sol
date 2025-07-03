@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.21;
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-
-// Price oracle interface
-interface IPriceOracle {
-    function getLatestPrice(address token) external view returns (uint256 price, uint8 decimals);
-}
+import "./interfaces/IChainlink.sol";
 
 contract LiquidityAggregator is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
@@ -68,22 +64,21 @@ contract LiquidityAggregator is ReentrancyGuard, Ownable {
         _;
     }
 
-    // Replace with actual provider addresses in production
+    // TODO: Replace with actual provider addresses in production
     modifier onlyTrustedProvider() {
         if (
-            msg.sender != address(0xAAVE_PROVIDER) &&
-            msg.sender != address(0xBALANCER_PROVIDER) &&
-            msg.sender != address(0xUNISWAP_PROVIDER)
+            msg.sender != address(0x1111111111111111111111111111111111111111) && // Aave placeholder
+            msg.sender != address(0x2222222222222222222222222222222222222222) && // Balancer placeholder
+            msg.sender != address(0x3333333333333333333333333333333333333333)    // Uniswap placeholder
         ) revert UnauthorizedCallback();
         _;
     }
 
-    constructor(address _daoAddress, address _priceOracle) {
+    constructor(address _daoAddress, address _priceOracle) Ownable(_daoAddress) {
         if (_daoAddress == address(0)) revert InvalidAddress();
         if (_priceOracle == address(0)) revert InvalidAddress();
         daoAddress = _daoAddress;
         priceOracle = IPriceOracle(_priceOracle);
-        _transferOwnership(_daoAddress);
     }
 
     // MAIN FLASH LOAN FUNCTION
@@ -269,7 +264,7 @@ contract LiquidityAggregator is ReentrancyGuard, Ownable {
         uint256 repayAmount,
         FlashLoanProvider provider
     ) internal {
-        IERC20(loanAsset).safeApprove(msg.sender, repayAmount); // Approve provider to pull funds
+        IERC20(loanAsset).forceApprove(msg.sender, repayAmount); // Approve provider to pull funds
     }
 
     // CHAINLINK PRICE FETCHER
