@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="DeFi Custody Platform - Secure custody, compliant asset management, and advanced flash loan aggregation for institutional-grade DeFi operations." />
+    
+    <!-- Manifest -->
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    
+    <title>DeFi Custody Platform</title>
+    
+    <!-- Critical CSS for loading screen -->
+    <style>
+      .loading-screen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        color: #ffffff;
+        font-family: 'Roboto', sans-serif;
+      }
+      
+      .loading-logo {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: linear-gradient(45deg, #3f51b5 30%, #f50057 90%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 20px;
+        animation: pulse 2s ease-in-out infinite;
+      }
+      
+      .loading-text {
+        font-size: 24px;
+        font-weight: 600;
+        margin-bottom: 10px;
+        background: linear-gradient(45deg, #3f51b5 30%, #f50057 90%);
+        background-clip: text;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      
+      .loading-subtitle {
+        font-size: 14px;
+        color: #b3b3b3;
+        margin-bottom: 30px;
+      }
+      
+      .loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid rgba(255, 255, 255, 0.1);
+        border-top: 3px solid #3f51b5;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      
+      @keyframes pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.05); opacity: 0.8; }
+      }
+      
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      
+      .loaded .loading-screen {
+        opacity: 0;
+        transition: opacity 0.5s ease-out;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>
+      <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #0a0a0a; color: #ffffff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: Arial, sans-serif; text-align: center; padding: 20px;">
+        <h1 style="color: #3f51b5; margin-bottom: 20px;">JavaScript Required</h1>
+        <p style="font-size: 18px; margin-bottom: 20px;">DeFi Custody Platform requires JavaScript to function properly.</p>
+        <p style="color: #b3b3b3;">Please enable JavaScript in your browser settings and refresh the page.</p>
+      </div>
+    </noscript>
+    
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="loading-screen">
+      <div class="loading-logo">
+        <span style="color: white; font-size: 32px; font-weight: bold;">DC</span>
+      </div>
+      <div class="loading-text">DeFi Custody Platform</div>
+      <div class="loading-subtitle">Initializing secure Web3 connection...</div>
+      <div class="loading-spinner"></div>
+    </div>
+    
+    <!-- React App Root -->
+    <div id="root"></div>
+    
+    <script>
+      // Hide loading screen when React app loads
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+          document.body.classList.add('loaded');
+          setTimeout(function() {
+            const loadingScreen = document.getElementById('loading-screen');
+            if (loadingScreen) {
+              loadingScreen.remove();
+            }
+          }, 500);
+        }, 1000);
+      });
+    </script>
+  </body>
+</html>

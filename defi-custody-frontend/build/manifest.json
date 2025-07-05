@@ -1,0 +1,95 @@
+{
+  "short_name": "DeFi Custody",
+  "name": "DeFi Custody Platform",
+  "description": "Secure custody, compliant asset management, and advanced flash loan aggregation for institutional-grade DeFi operations.",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "maskable"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#3f51b5",
+  "background_color": "#0a0a0a",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en-US",
+  "dir": "ltr",
+  "categories": ["finance", "business", "productivity"],
+  "screenshots": [
+    {
+      "src": "screenshot-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "DeFi Custody Platform Dashboard"
+    },
+    {
+      "src": "screenshot-narrow.png",
+      "sizes": "720x1280",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "DeFi Custody Platform Mobile"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "View portfolio overview",
+      "url": "/dashboard",
+      "icons": [
+        {
+          "src": "shortcut-dashboard.png",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "Flash Loans",
+      "short_name": "Flash Loans",
+      "description": "Access flash loan aggregator",
+      "url": "/flash-loans",
+      "icons": [
+        {
+          "src": "shortcut-flash.png",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "Asset Registry",
+      "short_name": "Assets",
+      "description": "Manage real-world assets",
+      "url": "/assets",
+      "icons": [
+        {
+          "src": "shortcut-assets.png",
+          "sizes": "96x96"
+        }
+      ]
+    }
+  ],
+  "prefer_related_applications": false,
+  "related_applications": [],
+  "edge_side_panel": {
+    "preferred_width": 400
+  },
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  }
+}

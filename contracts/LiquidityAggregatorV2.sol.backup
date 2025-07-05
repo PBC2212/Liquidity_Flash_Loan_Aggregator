@@ -9,6 +9,7 @@ import "./interfaces/IChainlink.sol";
 import "./interfaces/IAaveV3.sol";
 import "./interfaces/IBalancer.sol";
 import "./interfaces/IUniswapV3.sol";
+import "./interfaces/IERC20Permit.sol";  // <--- Added import
 
 /**
  * @title CustodyRegistry
@@ -219,9 +220,9 @@ contract LiquidityAggregatorV2 is
     // Flash Loan Initiations
     function _initiateAaveFlashLoan(address asset, uint256 amount, bytes memory params) internal {
         address pool = IAavePoolAddressesProvider(AAVE_POOL_ADDRESSES_PROVIDER).getPool();
-        address[] memory assets = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
-        uint256[] memory modes = new uint256[](1);
+        address ;
+        uint256 ;
+        uint256 ;
         assets[0] = asset;
         amounts[0] = amount;
         modes[0] = 0;
@@ -229,8 +230,8 @@ contract LiquidityAggregatorV2 is
     }
 
     function _initiateBalancerFlashLoan(address asset, uint256 amount, bytes memory params) internal {
-        IERC20[] memory tokens = new IERC20[](1);
-        uint256[] memory amounts = new uint256[](1);
+        IERC20 ;
+        uint256 ;
         tokens[0] = IERC20(asset);
         amounts[0] = amount;
         IBalancerVault(BALANCER_VAULT).flashLoan(IBalancerFlashLoanRecipient(address(this)), tokens, amounts, params);
@@ -400,78 +401,4 @@ contract LiquidityAggregatorV2 is
     // Collateral Value Check
     function _verifyCollateralValue(
         address[] calldata collateralTokens,
-        uint256[] calldata collateralAmounts,
-        address loanAsset,
-        uint256 loanAmount,
-        uint256 premium
-    ) internal view returns (bool) {
-        uint256 totalValue = 0;
-        (uint256 loanAssetPrice, uint8 loanAssetDecimals) = getChainlinkPrice(loanAsset);
-        for (uint256 i = 0; i < collateralTokens.length; i++) {
-            address token = collateralTokens[i];
-            uint256 amount = collateralAmounts[i];
-            (uint256 price, uint8 decimals) = getChainlinkPrice(token);
-            require(price > 0, "Invalid price");
-            uint256 value = (price * amount) / (10 ** decimals);
-            totalValue += value;
-        }
-        uint256 requiredValue = ((loanAmount + premium) * minimumCollateralRatio * loanAssetPrice) / (10000 * (10 ** loanAssetDecimals));
-        return totalValue >= requiredValue;
-    }
-
-    function getChainlinkPrice(address token) public view returns (uint256 price, uint8 decimals) {
-        (price, decimals) = priceOracle.getLatestPrice(token);
-    }
-
-    // Governance Functions
-    function addAllowedCollateral(address token) external onlyDAO {
-        require(token != address(0), "Invalid address");
-        allowedERC20Collateral[token] = true;
-        emit CollateralAdded(token);
-    }
-
-    function removeAllowedCollateral(address token) external onlyDAO {
-        allowedERC20Collateral[token] = false;
-        emit CollateralRemoved(token);
-    }
-
-    function setSlippageTolerance(uint256 bps) external onlyDAO {
-        require(bps <= 1000, "Invalid ratio");
-        uint256 oldTolerance = slippageTolerance;
-        slippageTolerance = bps;
-        emit SlippageToleranceUpdated(oldTolerance, bps);
-    }
-
-    function setMinimumCollateralRatio(uint256 _ratio) external onlyDAO {
-        require(_ratio >= 10000, "Invalid ratio");
-        uint256 oldRatio = minimumCollateralRatio;
-        minimumCollateralRatio = _ratio;
-        emit MinimumCollateralRatioUpdated(oldRatio, _ratio);
-    }
-
-    function setPriceOracle(address _oracle) external onlyDAO {
-        require(_oracle != address(0), "Invalid address");
-        address oldOracle = address(priceOracle);
-        priceOracle = IPriceOracle(_oracle);
-        emit PriceOracleUpdated(oldOracle, _oracle);
-    }
-
-    function setDAOAddress(address _dao) external onlyDAO {
-        require(_dao != address(0), "Invalid address");
-        address oldDAO = daoAddress;
-        daoAddress = _dao;
-        emit DAOAddressUpdated(oldDAO, _dao);
-    }
-
-    function setCustodyRegistry(address _registry) external onlyDAO {
-        require(_registry != address(0), "Invalid address");
-        address oldRegistry = address(custodyRegistry);
-        custodyRegistry = CustodyRegistry(_registry);
-        emit CustodyRegistryUpdated(oldRegistry, _registry);
-    }
-
-    // Emergency Withdrawal
-    function withdrawERC20(IERC20 token, uint256 amount) external onlyOwner {
-        token.safeTransfer(owner(), amount);
-    }
-}
+        uint

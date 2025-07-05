@@ -1,0 +1,23 @@
+{
+  "short_name": "DeFi Custody",
+  "name": "DeFi Custody Platform",
+  "description": "Secure custody, compliant asset management, and advanced flash loan aggregation for institutional-grade DeFi operations.",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#3f51b5",
+  "background_color": "#0a0a0a",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en-US",
+  "dir": "ltr",
+  "categories": ["finance", "business", "productivity"],
+  "prefer_related_applications": false,
+  "related_applications": []
+}
